@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>960 Genetic Chess Positions</title>
+        <body>
+            <script type="text/javascript" src="random_position.js"></script>
+            <h3 id="seed"></h3>
+            <img id="FEN_image" alt="An image of the position described by the below FEN">
+            <p>In all positions, it is white to move. Neither side can castle.</p>
+            <p>FEN: <samp id="FEN_text"></samp></p>
+            <p id="stockfish_eval"></p>
+            <div>
+                <a id="sharePosition">
+                    Link to this position
+                </a>    
+            </div>
+            <div>
+            <a href="./">
+                New random position
+            </a>
+            <a href="./?oneset=true">
+                New random position if you only have pieces for one board
+            </a>
+        </div>
+        </body>
+    </head>
+</html>
