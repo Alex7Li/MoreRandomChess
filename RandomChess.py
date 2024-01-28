@@ -1,5 +1,5 @@
-# SOURCE: https://github.com/santient/GeneticChess/blob/main/GeneticChess.py
 import argparse
+from ctypes import ArgumentError
 import chess
 import io
 import tqdm
@@ -8,7 +8,7 @@ import math
 import numpy as np
 from stockfish import Stockfish, StockfishException
 import time
-from typing import List, Any, Tuple
+from typing import List, Any, Tuple, Literal
 from pathlib import Path
 import matplotlib.pyplot as plt
 
@@ -23,41 +23,55 @@ est_piece_values = {
 CHESS_VALUE = est_piece_values['p'] * 8 + est_piece_values['n'] * 2  + est_piece_values['b'] * 2 + est_piece_values['r'] * 2 + est_piece_values['q'] 
 INF = 1000.0
 
-def generate_one_side(one_set_only, target_value):
+def generate_one_side(pieceset: Literal['standard', 'balanced', 'chaos'] = 'standard'):
     half_board = [[' ' for _ in range(8)] for _ in range(4)]
     # 1 king on 1st rank guaranteed
     half_board[0][np.random.randint(8)] = 'k'
-    # 4 pawns on 2nd rank guaranteed
+    # 3 pawns on 2nd rank guaranteed
     # 2 undoubled pawns on 3rd rank guaranteed
-    pawn_cols = np.random.choice(8, 6, replace=False)
-    pawn_rank3 = np.random.choice(pawn_cols)
+    pawn_cols = np.random.choice(8, 5, replace=False)
+    pawn_rank3 = np.random.choice(pawn_cols, 2, replace=False)
     for i in pawn_cols:
-        if i == pawn_rank3:
+        if i in pawn_rank3:
             half_board[2][i] = 'p'
         else:
             half_board[1][i] = 'p'
     # Figure out what other pieces to add
-    if one_set_only:
-        pieces_to_add = 'qrrbbnn'
+    if pieceset == 'standard':
+        # Normal chess pieces
+        queens_to_add = 1
+        rooks_to_add = 2
+        bishops_to_add = 2
+        knights_to_add = 2
         n_pawns_to_add = 2
-    else:
-        value_left = target_value - 6 * est_piece_values['p']
-        queens_to_add = np.random.randint(0, 2 + 1)
+    elif pieceset == 'balanced':
+        # A set of pieces with value similar to normal chess
+        value_left = CHESS_VALUE - 6 * est_piece_values['p']
+        queens_to_add = np.random.choice([0,1,2], p=[.25,.5,.25])
         value_left -= est_piece_values['q']  * queens_to_add
+        rooks_to_add = max(0, np.random.choice([3, 4, 5], p=[.25 + .1 * queens_to_add, .5, .25 - .1 * queens_to_add]) - 2 * queens_to_add)
         rooks_to_add = np.random.randint(max(0, 3 - 2 * queens_to_add), 5 - 2 * queens_to_add + 1)
         value_left -= est_piece_values['r']  * rooks_to_add
-        max_minors_to_add = int(value_left / est_piece_values['b'])
-        minors_to_add = np.random.randint(max_minors_to_add - 1, max_minors_to_add + 1)
+        max_minors_to_add = value_left / est_piece_values['b']
+        minors_to_add = np.random.randint(int(max_minors_to_add - 1.5), int(max_minors_to_add + 1.5))
         bishops_to_add = int(np.sum(np.random.randint(0, 2, minors_to_add))) # binomial distribution
         knights_to_add = minors_to_add - bishops_to_add
         value_left -= est_piece_values['n'] * knights_to_add
         value_left -= est_piece_values['b'] * bishops_to_add
-        pieces_to_add = 'q' * queens_to_add + 'r' * rooks_to_add + 'b' * bishops_to_add + 'n' * knights_to_add
-        n_pawns_to_add = np.random.randint(int(value_left - 1), int(value_left) + 1)
+        n_pawns_to_add = np.random.randint(int(value_left) - 1, int(value_left) + 2)
+    elif pieceset == 'chaos':
+        # Can result in very different piece values. Some regularization on the number of pieces
+        queens_to_add = np.random.randint(0, 3)
+        rooks_to_add = np.random.randint(0, 5 - queens_to_add)
+        minors_to_add = np.random.randint(5, 10) - queens_to_add - rooks_to_add
+        bishops_to_add = int(np.sum(np.random.randint(0, 2, minors_to_add))) # binomial distribution
+        knights_to_add = minors_to_add - bishops_to_add
+        n_pawns_to_add = np.random.randint(0, 12 - minors_to_add - rooks_to_add // 2)
+    pieces_to_add = 'q' * queens_to_add + 'r' * rooks_to_add + 'b' * bishops_to_add + 'n' * knights_to_add
     # Add pawns
     empty_pawn_locs = (np.array(half_board[1:]) == ' ').astype(np.float32)
-    empty_pawn_locs[1] *= .8
-    empty_pawn_locs[2] *= .6
+    # empty_pawn_locs[1] *= .8
+    # empty_pawn_locs[2] *= .6
     empty_pawn_locs = empty_pawn_locs / np.sum(empty_pawn_locs)
     if n_pawns_to_add > 0:
         to_add_coords = np.random.choice(len(empty_pawn_locs.flatten()), n_pawns_to_add, replace=False, p=empty_pawn_locs.flatten())
@@ -66,8 +80,8 @@ def generate_one_side(one_set_only, target_value):
     # Add pieces
     empty_locs = (np.array(half_board) == ' ').astype(np.float32)
     empty_locs[1] *= .8
-    empty_locs[2] *= .6
-    empty_locs[3] *= .4
+    empty_locs[2] *= .5
+    empty_locs[3] *= .3
     empty_locs = empty_locs / np.sum(empty_locs)
     if len(pieces_to_add) > 0:
         to_add_coords = np.random.choice(len(empty_locs.flatten()), len(pieces_to_add), replace=False, p=empty_locs.flatten())
@@ -75,24 +89,15 @@ def generate_one_side(one_set_only, target_value):
             half_board[coord //8][coord % 8] = pieces_to_add[i]
     return half_board
 
-def shuffle(board):
-    board = [[e for e in r] for r in board] # copy
-    # choose pieces on the sane rank and swap
-    r,c1,c2=0,0,0
-    while board[r][c1] == board[r][c2]:
-        r = np.random.randint(0, 8)
-        c1 = np.random.randint(0, 8)
-        c2 = np.random.randint(0, 8)
-    board[r][c1], board[r][c2] = board[r][c2], board[r][c1]
-    return board
-
-def generate_board(one_set_only):
-    white = generate_one_side(one_set_only, CHESS_VALUE - est_piece_values['p'])
-    black = generate_one_side(one_set_only, CHESS_VALUE)
+def generate_board(pieceset: Literal['standard', 'balanced', 'chaos'] = 'standard'):
+    white = generate_one_side(pieceset)
+    black = generate_one_side(pieceset)
     black[0], black[3] = black[3], black[0]
     black[1], black[2] = black[2], black[1]
     black = [[p.upper() for p in r] for r in black]
     board = white + black
+    if abs(check_valid(board_to_fen(board))) >= INF:
+        return generate_board(pieceset)
     return board
 
 def board_to_fen(board):
@@ -114,108 +119,129 @@ def board_to_fen(board):
         s.write(" w - - 0 1")
         return s.getvalue()
 
-def evaluate(board, engine, related_to_last=False) -> float:
-    fen = board_to_fen(board)
+def check_valid(fen):
     board = chess.Board(fen)
-    is_check = board.is_check()
-    if is_check:
+    is_checkmate = board.is_checkmate()
+    if is_checkmate:
         return INF
     board = chess.Board(fen.replace('w', 'b'))
     is_check_black = board.is_check()
     if is_check_black:
         return -INF
+    return 0
+
+def evaluate(engine) -> float:
     try:
-        engine.set_fen_position(fen, send_ucinewgame_token=related_to_last)
         val = engine.get_evaluation()
         if val["type"] == "cp":
-            if val['value'] == 0:
-                # A forced draw is not desirable so return a highish value
-                return -100
             return val["value"]
         elif val['type'] == 'mate':
             return INF if val["value"] > 0 else -INF
     except StockfishException as e:
+        print(engine.get_fen_position())
         print(e)
-        print(fen)
     return INF
 
-def evaluate_position_group(board, engine, desired_eval, tries) -> Tuple[Any, float]:
-    best_eval = evaluate(board, engine, related_to_last=True)
-    for t in range(tries - 1):
-        # print(best_eval, end=' ')
-        if abs(best_eval) < desired_eval:
-            # print()
-            return board, best_eval
-        else:
-            new_board = shuffle(board)
-            eval = evaluate(new_board, engine, related_to_last=True)
-            if abs(eval) < best_eval:
-                best_eval = abs(eval)
-                board = new_board
-    return board, best_eval
+class NoInterestingMoves(Exception):
+    pass
 
-def get_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--stockfish", type=str, default="./stockfish", help="path to stockfish binary (default ./stockfish)")
-    parser.add_argument("--depth", type=int, default=20, help="balance evaluation depth (default 20)")
-    parser.add_argument("--final-depth", type=int, default=30, help="final evaluation depth (default 30)")
-    parser.add_argument("--threads", type=int, default=4, help="engine CPU threads (default 4)")
-    parser.add_argument("--seed", type=int, default=None, help="random seed (default random)")
-    parser.add_argument("--error", type=float, default=0.25, help="target error margin for evaluation (default 0.25)")
-    parser.add_argument("--lines", type=int, default=1, help="lines to evaluate (default 1)")
-    parser.add_argument("--stable", action="store_true", help="search for depth-stable evaluation (default false)")
-    parser.add_argument("--quiet", action="store_true", help="no noisy print statements")
-    parser.add_argument("--n", type=int, default=1, help="generate multiple positions")
-    parser.add_argument("--one_set", action="store_true", help="generate positions which can be created with only 1 chess set (max 1 queen, 2 rooks, etc...)")
-    args = parser.parse_args()
-    return args
+def make_equalizing_moves(engine: Stockfish):
+    for _ in range(2): # make 2 moves so it is still white to move
+        most_equalizing = None
+        best_centipawn = 100000
+        engine.set_depth(15)
+        for move in engine.get_top_moves(10):
+            if (len(move['Move']) == 4 # Avoid promotions and checks and captures to keep it interesting
+                and best_centipawn != 0 # no forced draws
+                and move['Centipawn'] is not None \
+                and abs(move['Centipawn']) < abs(best_centipawn)):
+                best_centipawn = move['Centipawn']
+                most_equalizing = move['Move']
+        if most_equalizing is None:
+            raise NoInterestingMoves
+        engine.make_moves_from_current_position([most_equalizing])
+        most_equalizing = None
+    return engine
+
+def improve_position(fen, engine: Stockfish, desired_eval, tries: int) -> Tuple[str, float]:
+    engine.set_fen_position(fen)
+    abs_eval = INF
+    t = 0
+    while abs(abs_eval) > desired_eval and t < tries:
+        if abs_eval > 300:
+            engine.set_depth(10)
+        elif abs_eval > 200:
+            engine.set_depth(13)
+        elif abs_eval > 100:
+            engine.set_depth(16)
+        elif abs_eval > 50:
+            engine.set_depth(19)
+
+        for _ in range(2): # make 2 moves so it is still white to move
+            most_equalizing = None
+            best_centipawn = 100000
+            for move in engine.get_top_moves(8):
+                # Avoid promotions and checks and captures to keep it interesting -
+                # equivalent to ensure that move['Move'] is of length 4
+                if len(move['Move']) == 4 and move['Centipawn'] is not None and abs(move['Centipawn']) < abs(best_centipawn) and move['Centipawn'] != 0:
+                    best_centipawn = abs(move['Centipawn'])
+                    most_equalizing = move['Move']
+            if most_equalizing is not None:
+                engine.make_moves_from_current_position([most_equalizing])
+                most_equalizing = None
+                abs_eval = best_centipawn
+        t += 1
+        if abs_eval < desired_eval:
+            # Confirm at high depth
+            engine.set_depth(23)
+            abs_eval = evaluate(engine)
+        print(abs_eval, end=' ', flush=True)
+        if abs_eval < desired_eval and abs_eval != 0:
+            break
+    return engine.get_fen_position(), abs_eval
 
 def print_board(board):
     for r in board:
-        print(str(r))
-
-def filter_by_value(candidate_fens, eval, radius) -> Tuple[List[str], List[float]]:
-    filtered = [(fen, val) for fen, val in zip(candidate_fens, eval) if abs(val) < radius]
-    fens = [f[0] for f in filtered]
-    vals = [f[1] for f in filtered]
-    return fens, vals
+        print(str(object=r))
 
 def filter_unfair_boards(candidate_boards, out_f):
     stockfish_path = str(Path(__file__).parent / 'stockfish')
-    fish_params = {"Threads": 12, "Hash": 4096}
-    evals = []
+    fish_params = {"Threads": 12, "Hash": 8192 * 2, "Slow Mover": 0}
     engine = Stockfish(path=stockfish_path, parameters=fish_params)
     good_fens = []
     board_centipawns = []
-    for board in tqdm.tqdm(candidate_boards):
-        is_good_enough = False
+    for board in candidate_boards:
         eval = 0
+        fen = board_to_fen(board)
         # Note: Chess 960 has an average centipawn difference of 35 +- 16
         # https://www.reddit.com/r/chess/comments/yeregq/fischer_random_all_960_starting_positions/
-        for depth, radius_to_pass, desired_eval, tries in list(zip(
-            [20, 14, 21, 26],
-            [500, 150, 70, 200],
-            [500, 50, 35, 30],
-            [1, 15, 6, 1])):
-            engine.set_depth(depth)
-            board, eval = evaluate_position_group(board, engine, desired_eval, tries)
-            is_good_enough = abs(eval) < radius_to_pass
-            if not is_good_enough:
-                break
-        if is_good_enough:
-            good_fens.append(board_to_fen(board))
+        try:
+            new_fen, eval = improve_position(fen, engine, 35, 20)
+        except NoInterestingMoves:
+            continue
+        is_good_enough = abs(eval) < 35 and eval != 0
+        board, tomove, castling, enpassant, halfmoves, fullmoves = new_fen.split(' ')            
+        if is_good_enough and tomove == 'w' and enpassant == '-':
+            good_fens.append(new_fen)
             board_centipawns.append(eval)
-            print(f"Good board #{len(good_fens)} found")
-            print('{' + f"'fen': '{good_fens[-1]}', 'eval': {board_centipawns[-1]}" + '},\n')
-    return good_fens, evals
+            out_str = '{' + f"'fen': '{good_fens[-1]}', 'eval': {board_centipawns[-1]}" + '},\n'
+            print(out_str)
+            out_f.write(out_str)
+            out_f.flush()
 
 def main():
-    candidate_boards = [generate_board(False) for _ in range(500)]
-    with open(parent_dir / 'rand_positions.txt', 'a+') as f:
-        fens, evals = filter_unfair_boards(candidate_boards, f)
-    candidate_boards = [generate_board(True) for _ in range(500)]
-    with open(parent_dir / 'rand_positions_oneset.txt', 'a+') as f:
-        fens, evals = filter_unfair_boards(candidate_boards, f)
+    for i in tqdm.tqdm(range(1, 500)):
+        if i % 3 == 0:
+            board = generate_board('standard')
+            filename = 'rand_positions.txt' 
+        elif i % 3 == 1:
+            board = generate_board('chaos')
+            filename = 'rand_positions_chaos.txt'
+        else: # i % 3 == 2
+            board = generate_board('balanced')
+            filename = 'rand_positions_oneset.txt'
+        with open(parent_dir / filename, 'a+') as f:
+            filter_unfair_boards([board], f)
 
 if __name__ == "__main__":
     parent_dir = Path(__file__).parent
