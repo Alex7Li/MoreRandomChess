@@ -20,7 +20,7 @@ const userHome = (ctrl: Ctrl) => [
           attrs: { type: 'button' },
           on: { click: () => ctrl.playAi(5, position['fen']) },
         },
-        'Play the Lichess AI from this position as black'
+        'Play the Lichess AI from this position'
       ),
       // h(`
       //   'button.btn.btn-outline-primary.btn-lg',
@@ -117,6 +117,9 @@ const renderGenerator = (fen: string) => {
     h('p', 'White to move '),
     h('p', 'Position #' + position['seed']),
     h('samp', 'FEN: ' + fen),
+    h('div', [
+      h('a', {attrs: href('https://lichess.org/analysis/standard/' + position['fen'])}, 'Analysis Board: https://lichess.org/analysis/standard/' + position['fen']),
+    ]),
     h('div.btn-group.mt-5', [
       h('button.btn.btn-outline-primary.btn-lg', {
         attrs: { type: 'button' },

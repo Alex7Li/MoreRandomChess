@@ -18,7 +18,7 @@ const renderNavBar = (ctrl: Ctrl) =>
         {
           attrs: href('/'),
         },
-        'Lichess API Demo'
+        'Random Chess Positions'
       ),
       h(
         'button.navbar-toggler',
