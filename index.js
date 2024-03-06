@@ -4746,9 +4746,9 @@ var LichessDemo = (function () {
                 this.challenge = await ChallengeCtrl.make({
                     username,
                     rated: false,
-                    // 'clock.limit': minutes * 60,
-                    // 'clock.increment': increment,
-                    fen,
+                    'clock.limit': 10 * 60,
+                    'clock.increment': 3,
+                    fen: fen,
                 }, this);
                 this.page = 'challenge';
                 this.redraw();
@@ -7510,8 +7510,7 @@ var LichessDemo = (function () {
         return result;
     };
 
-    const renderHome = ctrl => (ctrl.auth.me ? userHome(ctrl) : anonHome());
-    const patch = init([classModule]);
+    const renderHome = ctrl => (ctrl.auth.me ? userHome(ctrl) : anonHome(ctrl));
     const searchParams = new URLSearchParams(window.location.search);
     let position = get_random_position(searchParams.get('seed'), searchParams.get('oneset'));
     let difficulty = 1;
@@ -7523,12 +7522,12 @@ var LichessDemo = (function () {
         const playAINode = playAI(difficulty, ctrl);
         return [
             h('div', [
-                renderRandomApp(),
+                renderRandomApp(ctrl),
                 h('div.btn-group.mt-5', [
                     playAINode,
                     h('button.btn.btn-outline-primary.btn-lg', {
                         attrs: { type: 'button' },
-                        on: { click: () => { difficulty = (difficulty % 8) + 1; patch(playAINode, playAI(difficulty, ctrl)); } },
+                        on: { click: () => { difficulty = (difficulty % 8) + 1; ctrl.redraw(); } },
                     }, 'Harder AI'),
                     h('button.btn.btn-outline-primary.btn-lg', {
                         attrs: { type: 'button' },
@@ -7577,9 +7576,9 @@ var LichessDemo = (function () {
             },
         }, 'board'),
     ]);
-    const anonHome = () => [
+    const anonHome = (ctrl) => [
         h('div.login.text-center', [
-            renderRandomApp(),
+            renderRandomApp(ctrl),
             h('div.big', [h('p', 'Please log in to play this position.')]),
             h('a.btn.btn-primary.btn-lg.mt-5', {
                 attrs: href('/login'),
@@ -7599,32 +7598,44 @@ var LichessDemo = (function () {
                             coordinates: true,
                         });
                     },
+                    postpatch(vnode, nvnode) {
+                        console.log('patch');
+                        const el = nvnode.elm;
+                        Chessground(el, {
+                            fen: fen,
+                            orientation: 'white',
+                            viewOnly: true,
+                            coordinates: true,
+                        });
+                    }
                 },
             }, 'board'),
             h('p', 'White to move '),
             h('p', 'Position #' + position['seed']),
             h('samp', 'FEN: ' + fen),
             h('div', [
-                h('a', { attrs: { href: 'https://lichess.org/analysis/standard/' + position['fen'] } }, 'Analysis Board: https://lichess.org/analysis/standard/' + position['fen']),
+                h('span', 'Analysis Board: '),
+                h('a', { attrs: { href: 'https://lichess.org/analysis/standard/' + position['fen'] } }, 'https://lichess.org/analysis/standard/' + fen),
             ])
         ]);
     };
-    const renderRandomApp = () => {
+    const renderRandomApp = (ctrl) => {
         const positionNode = renderPosition(position['fen']);
+        const positionLink = window.location.protocol + "//" + window.location.host + window.location.pathname + "?seed=" + position['seed'];
         return h('div', [
             positionNode,
+            h('div', [
+                h('span', 'Link to this position: '),
+                h('a', { attrs: { href: positionLink } }, positionLink),
+            ]),
             h('div.btn-group.mt-5', [
                 h('button.btn.btn-outline-primary.btn-lg', {
                     attrs: { type: 'button' },
-                    on: { click: () => { window.location.href = window.location.protocol + "//" + window.location.host + window.location.pathname + "?seed=" + position['seed']; } }
-                }, 'Link to this position'),
-                h('button.btn.btn-outline-primary.btn-lg', {
-                    attrs: { type: 'button' },
-                    on: { click: () => { window.location.href = window.location.protocol + "//" + window.location.host + window.location.pathname; } }
+                    on: { click: () => { position = get_random_position("", ""); ctrl.redraw(); } }
                 }, 'New random position'),
                 h('button.btn.btn-outline-primary.btn-lg', {
                     attrs: { type: 'button' },
-                    on: { click: () => { window.location.href = window.location.protocol + "//" + window.location.host + window.location.pathname + '?oneset=true'; } }
+                    on: { click: () => { position = get_random_position("", "true"); ctrl.redraw(); } }
                 }, 'New random position for one board'),
             ])
         ]);

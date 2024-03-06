@@ -81,9 +81,9 @@ export class Ctrl {
       {
         username,
         rated: false,
-        // 'clock.limit': minutes * 60,
-        // 'clock.increment': increment,
-        fen,
+        'clock.limit': 10 * 60,
+        'clock.increment': 3,
+        fen: fen,
       },
       this
     );
