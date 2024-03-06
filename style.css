@@ -17045,18 +17045,6 @@ body {
   min-height: 70vh;
 }
 
-.challenge-page {
-  display: flex;
-  flex-flow: column;
-  align-items: center;
-  justify-content: space-evenly;
-  height: 50vh;
-}
-.challenge-page__awaiting {
-  display: flex;
-  align-items: center;
-}
-
 #navbarSupportedContent {
   justify-content: flex-end;
 }
@@ -17131,6 +17119,18 @@ body {
 }
 .game-page__state {
   text-align: center;
+}
+
+.challenge-page {
+  display: flex;
+  flex-flow: column;
+  align-items: center;
+  justify-content: space-evenly;
+  height: 50vh;
+}
+.challenge-page__awaiting {
+  display: flex;
+  align-items: center;
 }
 
 .seek-page {

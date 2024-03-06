@@ -58,7 +58,7 @@ export class Ctrl {
       method: 'post',
       body: formData({
         level: level,
-        'fen': fen
+        fen
       }),
     });
   };
@@ -66,7 +66,7 @@ export class Ctrl {
   playPool = async (minutes: number, increment: number) => {
     this.seek = await SeekCtrl.make(
       {
-        rated: true,
+        rated: false,
         time: minutes,
         increment,
       },
@@ -76,13 +76,14 @@ export class Ctrl {
     this.redraw();
   };
 
-  playMaia = async (minutes: number, increment: number) => {
+  playMaia = async (fen: string, username: string) => {
     this.challenge = await ChallengeCtrl.make(
       {
-        username: 'maia1',
+        username,
         rated: false,
-        'clock.limit': minutes * 60,
-        'clock.increment': increment,
+        // 'clock.limit': minutes * 60,
+        // 'clock.increment': increment,
+        fen,
       },
       this
     );

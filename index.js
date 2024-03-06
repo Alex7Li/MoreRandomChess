@@ -4729,25 +4729,26 @@ var LichessDemo = (function () {
                     method: 'post',
                     body: formData({
                         level: level,
-                        'fen': fen
+                        fen
                     }),
                 });
             };
             this.playPool = async (minutes, increment) => {
                 this.seek = await SeekCtrl.make({
-                    rated: true,
+                    rated: false,
                     time: minutes,
                     increment,
                 }, this);
                 this.page = 'seek';
                 this.redraw();
             };
-            this.playMaia = async (minutes, increment) => {
+            this.playMaia = async (fen, username) => {
                 this.challenge = await ChallengeCtrl.make({
-                    username: 'maia1',
+                    username,
                     rated: false,
-                    'clock.limit': minutes * 60,
-                    'clock.increment': increment,
+                    // 'clock.limit': minutes * 60,
+                    // 'clock.increment': increment,
+                    fen,
                 }, this);
                 this.page = 'challenge';
                 this.redraw();
@@ -7510,37 +7511,47 @@ var LichessDemo = (function () {
     };
 
     const renderHome = ctrl => (ctrl.auth.me ? userHome(ctrl) : anonHome());
+    const patch = init([classModule]);
     const searchParams = new URLSearchParams(window.location.search);
     let position = get_random_position(searchParams.get('seed'), searchParams.get('oneset'));
-    const userHome = (ctrl) => [
-        h('div', [
-            renderGenerator(position['fen']),
-            h('div.btn-group.mt-5', [
-                h('button.btn.btn-outline-primary.btn-lg', {
-                    attrs: { type: 'button' },
-                    on: { click: () => ctrl.playAi(5, position['fen']) },
-                }, 'Play the Lichess AI from this position'),
-                // h(`
-                //   'button.btn.btn-outline-primary.btn-lg',
-                //   {
-                //     attrs: { type: 'button' },
-                //     on: { click: () => ctrl.playMaia(10, 0) },
-                //   },
-                //   'Play a casual 10+0 game with the maia1 BOT'
-                // ),
-                // h(
-                //   'button.btn.btn-outline-primary.btn-lg',
-                //   {
-                //     attrs: { type: 'button' },
-                //     on: { click: () => ctrl.playPool(10, 0) },
-                //   },
-                //   'Play a rated 10+0 game with a random opponent'
-                // ),
+    let difficulty = 1;
+    const playAI = (difficulty, ctrl) => h('button.btn.btn-outline-primary.btn-lg', {
+        attrs: { type: 'button' },
+        on: { click: () => ctrl.playAi(difficulty, position['fen']) },
+    }, 'Play the Lichess AI (level ' + difficulty + ') from this position');
+    const userHome = (ctrl) => {
+        const playAINode = playAI(difficulty, ctrl);
+        return [
+            h('div', [
+                renderRandomApp(),
+                h('div.btn-group.mt-5', [
+                    playAINode,
+                    h('button.btn.btn-outline-primary.btn-lg', {
+                        attrs: { type: 'button' },
+                        on: { click: () => { difficulty = (difficulty % 8) + 1; patch(playAINode, playAI(difficulty, ctrl)); } },
+                    }, 'Harder AI'),
+                    h('button.btn.btn-outline-primary.btn-lg', {
+                        attrs: { type: 'button' },
+                        on: { click: () => ctrl.playMaia(position['fen'], 'maia1') },
+                    }, 'Play maia1 (rating ~1.4k)'),
+                    h('button.btn.btn-outline-primary.btn-lg', {
+                        attrs: { type: 'button' },
+                        on: { click: () => ctrl.playMaia(position['fen'], 'maia9') },
+                    }, 'Play maia9 (rating ~1.7k)'),
+                    // h(
+                    //   'button.btn.btn-outline-primary.btn-lg',
+                    //   {
+                    //     attrs: { type: 'button' },
+                    //     on: { click: () => ctrl.playPool(10, 3) },
+                    //   },
+                    //   'Play an unrated 10+3 game with a random opponent'
+                    // ),
+                ]),
+                h('h2.mt-5', 'Games in progress'),
+                h('div.games', renderGames(ctrl.games)),
             ]),
-            h('h2.mt-5', 'Games in progress'),
-            h('div.games', renderGames(ctrl.games)),
-        ]),
-    ];
+        ];
+    };
     const renderGames = (ongoing) => ongoing.games.length ? ongoing.games.map(renderGameWidget) : [h('p', 'No ongoing games at the moment')];
     const renderGameWidget = (game) => h(`a.game-widget.text-decoration-none.game-widget--${game.id}`, {
         attrs: href(`/game/${game.gameId}`),
@@ -7568,14 +7579,14 @@ var LichessDemo = (function () {
     ]);
     const anonHome = () => [
         h('div.login.text-center', [
-            renderGenerator(position['fen']),
+            renderRandomApp(),
             h('div.big', [h('p', 'Please log in to play this position.')]),
             h('a.btn.btn-primary.btn-lg.mt-5', {
                 attrs: href('/login'),
             }, 'Login with Lichess'),
         ]),
     ];
-    const renderGenerator = (fen) => {
+    const renderPosition = (fen) => {
         return h('div', [
             h('span.game-widget__board.cg-wrap.mt-5', {
                 hook: {
@@ -7594,8 +7605,14 @@ var LichessDemo = (function () {
             h('p', 'Position #' + position['seed']),
             h('samp', 'FEN: ' + fen),
             h('div', [
-                h('a', { attrs: href('https://lichess.org/analysis/standard/' + position['fen']) }, 'Analysis Board: https://lichess.org/analysis/standard/' + position['fen']),
-            ]),
+                h('a', { attrs: { href: 'https://lichess.org/analysis/standard/' + position['fen'] } }, 'Analysis Board: https://lichess.org/analysis/standard/' + position['fen']),
+            ])
+        ]);
+    };
+    const renderRandomApp = () => {
+        const positionNode = renderPosition(position['fen']);
+        return h('div', [
+            positionNode,
             h('div.btn-group.mt-5', [
                 h('button.btn.btn-outline-primary.btn-lg', {
                     attrs: { type: 'button' },
