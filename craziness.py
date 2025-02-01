@@ -3,6 +3,7 @@ from chess.pgn import read_game
 from io import StringIO
 
 import chess.pgn
+from stockfish import Stockfish
 
 PIECE_VALUES = {
     chess.PAWN: 1,
@@ -27,21 +28,39 @@ CORNER_SQUARES = [chess.A1, chess.A8, chess.H8, chess.H1]
 def opposite_colour(colour: str):
     return "black" if colour == "white" else "white"
 
+
+stockfish_path = '/home/alexli/fun/stockfish/stockfish-ubuntu-x86-64-avx2'
+fish_params = {"Threads": 12, "Hash": 8192 * 2, "Slow Mover": 0}
+engine = Stockfish(path=stockfish_path, parameters=fish_params)
+engine.set_depth(25)
+
 # takes in a parsed PGN, estimates game craziness
 # and returns a score
 def estimate_game_craziness(game: chess.pgn.Game):
-    score = 0
-
     game_moves = list(game.mainline())
-
+    if game.headers['Result'] != '1/2-1/2':
+        if len(game_moves) <= 50:
+            engine.set_fen_position(game_moves[40].board().fen())
+            evaluation = engine.get_evaluation()
+            if evaluation['type'] != 'cp':
+                return 0, None # It's a mate-in-N
+            elif evaluation['value'] > 0.5 and game.headers['Result'] == '1-0':
+                return 0, None # Black lost and black's position is worse
+            elif evaluation['value'] < -0.5 and game.headers['Result'] == '0-1':
+                return 0, None # White lost and white's position is worse
+    offset = 20
     pieces_moved: list[chess.PieceType] = []
-    material_differences = []
-    
-    for node_index, move_node in enumerate(game_moves):
+    move_scores = [0] * offset
+    total_material = [78] * offset
+    for node_index, move_node in list(enumerate(game_moves))[offset:]:
+        score = 0
+        if node_index >= 40 or total_material[-1] < 20:
+            break
+
         move = move_node.move
         board = move_node.board()
 
-        turn_colour = "black" if board.turn else "white"
+        turn_colour = "white" if board.turn else "black"
 
         try:
             pieces_moved.append(
@@ -55,10 +74,6 @@ def estimate_game_craziness(game: chess.pgn.Game):
             "white": 0,
             "black": 0
         }
-
-        material_differences.append(
-            abs(material["white"] - material["black"])
-        )
 
         piece_counts = {
             "white": {},
@@ -90,21 +105,11 @@ def estimate_game_craziness(game: chess.pgn.Game):
                     king_square[piece_colour] = square
 
                 pieces_remaining += 1
-
-        # if material difference has been high for too long, discard game
-        if len(material_differences) >= 14:
-            balanced_position_found = False
-
-            for i in range(14):
-                current_difference = material_differences[-(i + 1)]
-
-                if current_difference <= 11:
-                    balanced_position_found = True
-                    break
-
-            if not balanced_position_found:
-                return -1
-
+        total_material.append(material['white'] + material['black'])
+        imbalance = 0
+        for piece_type in chess.PIECE_TYPES:
+            imbalance += abs(piece_counts["white"][piece_type] - piece_counts["black"][piece_type]) * PIECE_VALUES[piece_type] ** .5
+        score += imbalance
         # number of simultaneously hanging pieces
         for square in chess.SQUARES:
             piece = board.piece_at(square)
@@ -123,58 +128,29 @@ def estimate_game_craziness(game: chess.pgn.Game):
             # there's no sacrifice
             last_position = game_moves[node_index - 1].board()
             last_piece = last_position.piece_at(square)
+            piece_has_been_sitting_here = last_piece is not None and last_piece.color == piece.color
 
-            if (
-                last_piece is not None
-                and PIECE_VALUES[last_piece.piece_type] >= PIECE_VALUES[piece.piece_type]
-            ):
+            if not piece_has_been_sitting_here:
                 continue
 
             # Get the attackers of the current square
             attacker_squares = board.attackers(not piece.color, square)
+            attacker_values = sorted([PIECE_VALUES[board.piece_at(attacker).piece_type] for attacker in attacker_squares])
 
             # Get defenders of the current square
             defender_squares = board.attackers(piece.color, square)
+            defender_values = [PIECE_VALUES[piece.piece_type]] + sorted([PIECE_VALUES[board.piece_at(defender).piece_type] for defender in defender_squares])
 
-            if len(attacker_squares) > len(defender_squares):
-                score += PIECE_VALUES[piece.piece_type]
-            else:
-                # Count attackers that are of less value than the piece
-                for attacker_square in attacker_squares:
-                    attacker = board.piece_at(attacker_square)
-
-                    if PIECE_VALUES[attacker.piece_type] < PIECE_VALUES[piece.piece_type]:
-                        score += PIECE_VALUES[piece.piece_type]
-                        break
-
-        # discard threefold repetitions
-        if board.can_claim_threefold_repetition():
-            return -1
-        
-        # reward castling or king mates
-        if (
-            board.is_checkmate()
-            and (
-                "O-" in move_node.san()
-                or "K" in move_node.san()
-            )
-        ):
-            score += 20
-
-        # number of pieces on the board ABOVE that which is typical
-        # weighted towards rarity of this happening
-        for colour in piece_counts.keys():
-            for piece_type, count in piece_counts[colour].items():
-                if count > TYPICAL_PIECE_COUNTS[piece_type]:
-                    extra_count = count - TYPICAL_PIECE_COUNTS[piece_type]
-
-                    if piece_type == chess.QUEEN:
-                        if extra_count == 1:
-                            score += 0.5
-                        else:
-                            score += 0.5 + (5 * (extra_count - 1))
-                    else:
-                        score += 4 * extra_count
+            for i in range(len(attacker_values)):
+                if i == len(defender_values):
+                    # There is nothing to take
+                    break
+                if i + 1 == len(defender_values):
+                    # There is nothing defending this piece, we can simply take.
+                    score += defender_values[i] ** .5
+                elif attacker_values[i] < defender_values[i] and i <= len(defender_values):
+                    # Can take this piece and, when the next defender takes back, we have gained material
+                    score += (defender_values[i] - attacker_values[i]) ** .5
 
         # underpromotions, weighted towards their rarity
         if move.promotion == chess.QUEEN:
@@ -191,42 +167,35 @@ def estimate_game_craziness(game: chess.pgn.Game):
         if (
             "O-" not in move_node.san()
             and move.to_square in CORNER_SQUARES
+            and board.piece_at(move.to_square).piece_type == chess.KNIGHT
         ):
-            moved_piece_type = board.piece_at(move.to_square).piece_type
-
-            if moved_piece_type in [chess.QUEEN, chess.BISHOP]:
-                score += 2
-            elif moved_piece_type == chess.KNIGHT:
-                score += 3
+            score += 0.5
 
         # is king in the centre of the board when there are lots of pieces left
         if (
-            king_square[turn_colour] > 23
-            and king_square[turn_colour] < 40
-            and node_index <= 30
-            and piece_counts[opposite_colour(turn_colour)][chess.QUEEN] > 0
+            23 < king_square[turn_colour] < 40
+                and material[opposite_colour(turn_colour)] > 30
         ):
-            score += 2.5
+            score += 1.5
 
-        # consecutive moves of the king
-        if (
-            node_index <= 30
-            and pieces_remaining >= 20
-            and pieces_moved[-1] == chess.KING
-        ):
-            pieces_moved_index = 1
+        # discard threefold repetitions
+        if board.can_claim_threefold_repetition():
+            score -= 30
 
-            while pieces_moved_index <= len(pieces_moved):
-                last_moved_piece = pieces_moved[-pieces_moved_index]
+        move_scores.append(score)
+    best_node_value = 0
+    best_node = game_moves[0]
+    ws = [1.3,1.5,1,1,.5,.5,.2,.2,.2,.2]
 
-                if last_moved_piece == chess.KING:
-                    score += 1.5 * (1.075 ** ((pieces_moved_index - 1) / 2))
-                else:
-                    break
-
-                pieces_moved_index += 2
-
-    return round(score, 2)
+    for i in range(offset, len(move_scores) - len(ws)):
+        if game_moves[i].board().turn: # white to move only
+            cur_node_value = total_material[min(len(total_material) - 1, i + 4)] ** .3
+            for j, w in enumerate(ws):
+                cur_node_value += w * move_scores[i+j]
+            if cur_node_value > best_node_value:
+                best_node_value = cur_node_value
+                best_node = game_moves[i]
+    return best_node_value, best_node.board()
 
 
 # takes in a PGN string and returns the estimated
