@@ -1,15 +1,51 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Asymmetric Chess Positions</title>
+      </head>
+        <body>
+            <h3 id="seed"></h3>
+            <img id="FEN_image" alt="An image of the position described by the below FEN">
+            <p>In all positions, it is white to move. Neither side can castle.</p>
+            <p>FEN: <samp id="FEN_text"></samp></p>
+            <div>
+                <a id="sharePosition">
+                    Link to this position
+                </a>
+              <br/>
+                <a id="playWithFriend">
+                    Play with a friend
+                </a> Set the time controls through the lichess API and then send the challenge link to a friend
+              <br/>
+                <a id="playWithComputer">
+                    Play with the computer
+                </a> Make sure that the time control isn't unlimited, or this won't work!
+              <br/>
+            </div>
+            <details>
+              <summary>Computer analysis for this position - don't click this if you want to play the position with a friend!</summary>
+              <p id="stockfish_eval"></p>
 
-    <link href="style.css" rel="stylesheet">
+                <a id="analysisBoard">
+                    View the analysis board
+                </a>
+                <p id="gameinfo"></p>
+                <p id="pgn">
 
-    <title>Random Chess Positions</title>
-  </head>
-  <body>
-    <script src="index.js"></script>
-    <script>LichessDemo(document.body)</script>
-  </body>
+                </p>
+
+            </details>
+
+            <div>
+            <a href="index.html">
+                New random interesting position from a computer championship game
+            </a>
+            <br/>
+<!--            <a href="./">-->
+<!--                New random position from genetic algorithm - may feature different piece counts from normal chess-->
+<!--            </a>-->
+              <br/>
+        </div>
+            <script type="text/javascript" src="random_position.js"></script>
+        </body>
 </html>
