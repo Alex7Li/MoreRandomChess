@@ -9,32 +9,29 @@ import re
 from rich.progress import Progress
 from stockfish import Stockfish
 
-stockfish_path = '/home/alexli/fun/stockfish/stockfish-ubuntu-x86-64-avx2'
-fish_params = {"Threads": 12, "Hash": 8192 * 2, "Slow Mover": 0}
-engine = Stockfish(path=stockfish_path, parameters=fish_params)
-engine.set_depth(23)
-def get_cp_evaluation(fen):
+def get_cp_evaluation(fen, engine):
+    if fen in fen_cache:
+        return fen_cache[fen]
     engine.set_fen_position(fen)
     evaluation = engine.get_evaluation()
     if evaluation['type'] != 'cp':
-        return 1000 * (1 if evaluation['value'] > 0 else -1)  # It's a mate-in-N
+        result = 1000 * (1 if evaluation['value'] > 0 else -1)  # It's a mate-in-N
     else:
-        return evaluation['value']  # Black lost and black's position is worse
+        result =  evaluation['value']  # Black lost and black's position is worse
+    fen_cache[fen] = result
+    return result
 
-skip_games_file = Path('games_to_skip.txt')
-skip_games_file.touch()
-keep_games_file = Path('games_to_keep.txt')
-keep_games_file.touch()
-with open(skip_games_file, 'r') as f:
-    skip_games = set([l.strip() for l in f.readlines()])
-with open(keep_games_file, 'r') as f:
-    keep_games = set([l.strip() for l in f.readlines()])
+with open('fen_cache.txt', 'r') as f:
+    fen_cache = ast.literal_eval(f.readline())
 
 if __name__ == "__main__":
+    stockfish_path = '/home/alexli/fun/stockfish/stockfish-ubuntu-x86-64-avx2'
+    fish_params = {"Threads": 12, "Hash": 8192 * 2, "Slow Mover": 0}
+    engine = Stockfish(path=stockfish_path, parameters=fish_params)
+    engine.set_depth(23)
     games_directory = "caissabase"
 
     high_score_game_count = 960
-    low_score_game_count = 20
 
     pgn_files = [f for f in listdir(games_directory) if f.endswith('.pgn')]
 
@@ -71,30 +68,15 @@ if __name__ == "__main__":
                 if (
                     white_elo >= 3000
                     and black_elo >= 3000
+                    and 'Result' in game.headers
                     and 'TerminationDetails' in game.headers
                     and 'GameEndTime' in game.headers
                     # Remove short games that end in an early 3-fold repetition trying to hold a draw since it's hard
                     # for one side to win
                     and not (len(list(game.mainline())) <= 140 and game.headers['TerminationDetails'] == '3-Fold repetition')
                 ):
-                    is_fair = None
-                    if game.headers['GameEndTime'] in skip_games:
-                        is_fair = False
-                    elif game.headers['GameEndTime'] in keep_games:
-                        is_fair = True
                     pgn = re.sub(' [0-9]+\.\.\. ', '', re.sub("[\{].*?[\}]", "", str(game.mainline_moves())))
-                    DEBUG_GAME_TIME = None
-                    if DEBUG_GAME_TIME is not None and game.headers['GameEndTime'].strip() != DEBUG_GAME_TIME:
-                        game_score, best_position = 0, None
-                    else:
-                        game_score, best_position = estimate_game_craziness(game, is_fair)
-                    if is_fair is None and DEBUG_GAME_TIME is None:
-                        if best_position is None:
-                            with open(skip_games_file, 'a') as f:
-                                f.write(game.headers['GameEndTime'] + "\n")
-                        else:
-                            with open(keep_games_file, 'a') as f:
-                                f.write(game.headers['GameEndTime'] + "\n")
+                    game_score, best_position = estimate_game_craziness(game)
                     if best_position is not None and best_position.fen() not in seen_fens:
                         seen_fens.add(best_position.fen())
                         header = f"{game.headers['White']} v {game.headers['Black']} a {game.headers['Event']} {game.headers['Event']}"
@@ -103,32 +85,56 @@ if __name__ == "__main__":
                             "fen": best_position.fen(),
                             "headers": f"{game.headers.get('White', 'unknown')} (as white) v {game.headers.get('Black', 'unknown')} at tcec {game.headers.get('Event', '')}",
                             "pgn": pgn,
+                            "fair": 'maybe',
+                            "eval": 'unknown',
+                            'result': game.headers['Result']
                         })
-                        craziest_games.sort(
-                            key=lambda game_data : game_data["score"],
-                            reverse=True
-                        )
-
-                        craziest_games = craziest_games[:high_score_game_count]
                         progress.update(all_files_task, description=f"Seen: {games_seen + game_index} Min score: {craziest_games[-1]['score']:.1f} Max score: {craziest_games[0]['score']:.1f}")
-                        if (games_seen + game_index) % 200 == 0 and len(craziest_games) > 50:
-                            print(f"score {craziest_games[20]['score']} fen {craziest_games[20]['fen']} pgn {craziest_games[20]['pgn']} t [{craziest_games[20]['headers']['GameEndTime']}]")
                 game = read_game(pgn_file)
             games_seen += game_index
 
+            if file_index >= len(pgn_files) - 1:
+                craziest_games.sort(
+                    key=lambda game_data : game_data["score"],
+                    reverse=True
+                )
+                game_eval_task = progress.add_task('game_eval', total=high_score_game_count)
+                fair_crazy_games = []
+                for game in craziest_games:
+                    if len(fair_crazy_games) > high_score_game_count:
+                        break
+                    if game['fair'] == 'maybe':
+                        evaluation = get_cp_evaluation(game['fen'], engine)
+                        game['eval'] = evaluation
+                        if -1.25 < evaluation < 0.75 and game['result'] == '1-0':
+                            game['fair'] = 'yes'
+                        elif -.75 < evaluation < 1.25 and game['result'] == '0-1':
+                            game['fair'] = 'yes'
+                        elif -1.25 < evaluation < 1.25 and game['result'] ==  '1/2-1/2':
+                            game['fair'] = 'yes'
+
+                    if game['fair'] == 'yes':
+                        fair_crazy_games.append(game)
+                        progress.update(game_eval_task, advance=1)
+                craziest_games = fair_crazy_games
+                half_ind = high_score_game_count // 2
+                print(f"score {craziest_games[half_ind]['score']} fen {craziest_games[half_ind]['fen']} pgn {craziest_games[half_ind]['pgn']} t [{craziest_games[half_ind]['headers']}]")
+
     highest_scoring_leaderboard = ",\n".join([
-        game for game in craziest_games
+        str(game) for game in craziest_games
     ])
-    output_log = open(f"output_{time()}.log", "w")
 
-    output_log.write(f"the top {high_score_game_count} highest scoring games found were:\n{highest_scoring_leaderboard}",)
-
-    output_log_2 = open(f"rand_positions_tcec_short.txt", "w")
     with Progress() as progress:
         add_eval_task = progress.add_task('cp eval', total=len(craziest_games))
         for i in range(len(craziest_games)):
-            craziest_games[i]['eval'] = get_cp_evaluation(game['fen'])
+            if craziest_games[i]['eval'] == 'unknown':
+                craziest_games[i]['eval'] = get_cp_evaluation(craziest_games[i]['fen'], engine)
+            progress.update(add_eval_task, advance=1)
+    with open(f"rand_positions_tcec_short.txt", "w") as output_log:
+        output_log.write(str(craziest_games))
 
-    output_log_2.write(str(craziest_games))
 
     print(f"process finished in {round(time() - start_time, 2)}s")
+
+with open('fen_cache.txt', 'w') as f:
+    f.write(fen_cache)

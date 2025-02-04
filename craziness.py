@@ -3,7 +3,13 @@ from chess.pgn import read_game
 from io import StringIO
 import chess.pgn
 from typing import Optional
+import statistics
+from stockfish import Stockfish
 
+stockfish_path = '/home/alexli/fun/stockfish/stockfish-ubuntu-x86-64-avx2'
+fish_params = {"Threads": 12, "Hash": 8192 * 2, "Slow Mover": 0}
+engine = Stockfish(path=stockfish_path, parameters=fish_params)
+engine.set_depth(23)
 PIECE_VALUES = {
     chess.PAWN: 1,
     chess.KNIGHT: 3,
@@ -20,30 +26,20 @@ def opposite_colour(colour: str):
 
 # takes in a parsed PGN, estimates game craziness
 # and returns a score
-def estimate_game_craziness(game: chess.pgn.Game, is_fair: Optional[bool]):
-    from generate_positions_from_real_games import get_cp_evaluation
-    if is_fair is False:
-        return 0, None
+def estimate_game_craziness(game: chess.pgn.Game):
 
     # Return [craziness_score, craziest_position, craziest_position_evaluation
     game_moves = list(game.mainline())
-    if is_fair is None:
-        # Make sure that the game is not balanced too far in favor of one player
-        if game.headers['Result'] != '1/2-1/2': # It's an engine game so draws are balanced
-            if len(game_moves) <= 120:
-                # Engine games that are equal and don't convert material quickly
-                # should go at least 60 moves, otherwise it's probably not equal and let's not waste time evaluating.
-                return 0, None
-            evaluation = get_cp_evaluation(game_moves[40].board().fen())
-            if evaluation > 0.2 and game.headers['Result'] == '1-0':
-                return 0, None  # Black lost and black's position is worse according to low depth stockfish
-            elif evaluation < -0.2 and game.headers['Result'] == '0-1':
-                return 0, None  # White lost and white's position is worse according to low depth stockfish
+    last_book_move = 0
+    for move in game_moves:
+        if 'book' in move.comment:
+            last_book_move += 1
 
-    offset = 20
+    offset = max(last_book_move, 20)
     pieces_moved: list[chess.PieceType] = []
     move_scores = [0] * offset
     total_material = [78] * offset
+    material_difference = [0] * offset
     imbalance_score = [0] * offset
     for node_index, move_node in list(enumerate(game_moves))[offset:]:
 
@@ -100,6 +96,7 @@ def estimate_game_craziness(game: chess.pgn.Game, is_fair: Optional[bool]):
 
                 pieces_remaining += 1
         total_material.append(material['white'] + material['black'])
+        material_difference.append(material['white'] - material['black'])
         imbalance = 0
         for piece_type in chess.PIECE_TYPES:
             imbalance += abs(piece_counts["white"][piece_type] - piece_counts["black"][piece_type])
@@ -183,13 +180,14 @@ def estimate_game_craziness(game: chess.pgn.Game, is_fair: Optional[bool]):
         move_scores.append(score)
     best_node_value = 0
     best_board = None
-    ws = [1.3,1.5,1,1,.5,.5,.2,.2,.2,.2]
-
+    ws = [2,1.5,.5,.5,.4,.4,.3,.3,.2,.2]
+    # TODO don't start in a book move or you'll get destroyed by TCEC Viewer Submitted Openings
     for i in range(offset, len(move_scores) - len(ws)):
         cur_board = game_moves[i].board()
         if cur_board.turn: # white to move only
             cur_node_value = total_material[min(len(total_material) - 1, i + 4)] ** .3
             cur_node_value += imbalance_score[min(len(imbalance_score) - 1, i + 4)]
+            cur_node_value += abs(statistics.median([md for md in material_difference[i: min(len(imbalance_score) - 1, i + 11)]]))
             for j, w in enumerate(ws):
                 cur_node_value += w * move_scores[i+j]
             # Don't start in a position where en passant is possible
