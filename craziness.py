@@ -32,15 +32,19 @@ def estimate_game_craziness(game: chess.pgn.Game):
     game_moves = list(game.mainline())
     last_book_move = 0
     for move in game_moves:
+        # don't start in a book move or you'll get destroyed by TCEC Viewer Submitted Openings
+
         if 'book' in move.comment:
             last_book_move += 1
 
     offset = max(last_book_move, 20)
     pieces_moved: list[chess.PieceType] = []
     move_scores = [0] * offset
-    total_material = [78] * offset
-    material_difference = [0] * offset
+    total_material = [98] * offset
     imbalance_score = [0] * offset
+    all_turn_piece_counts = [
+       {'white': {}, 'black': {}}
+    ] * offset
     for node_index, move_node in list(enumerate(game_moves))[offset:]:
 
         score = 0
@@ -96,11 +100,7 @@ def estimate_game_craziness(game: chess.pgn.Game):
 
                 pieces_remaining += 1
         total_material.append(material['white'] + material['black'])
-        material_difference.append(material['white'] - material['black'])
-        imbalance = 0
-        for piece_type in chess.PIECE_TYPES:
-            imbalance += abs(piece_counts["white"][piece_type] - piece_counts["black"][piece_type])
-        imbalance_score.append(imbalance)
+        all_turn_piece_counts.append(piece_counts)
         # Remove positions where we can castle but it doesn't look like it
         if board.has_chess960_castling_rights():
             score = -1000  # We have castling rights - but this is a 960 game
@@ -109,8 +109,7 @@ def estimate_game_craziness(game: chess.pgn.Game):
             for square in chess.SQUARES:
                 piece = board.piece_at(square)
                 # The opponent has just made their move. What pieces have they left undefended?
-                # Does not account for complex tactics like pins on attackers, attackers through other attackers/
-                # defenders, moves on the other side of the board, etc.
+                # Does not account for complex tactics like pins or moves on the other side of the board
 
                 if (
                     piece is None
@@ -129,23 +128,25 @@ def estimate_game_craziness(game: chess.pgn.Game):
 
                 # Get the attackers of the current square that are not brand new - if they were just moved here last
                 # turn, we didn't sacrifice since we can defend it.
-                attacker_squares = board.attackers(board.turn, square)
-                attacker_values = sorted([PIECE_VALUES[board.piece_at(attacker).piece_type] for attacker in attacker_squares])
+                # attacker_squares = board.attackers(board.turn, square)
+                # attacker_values = sorted([PIECE_VALUES[board.piece_at(attacker).piece_type] for attacker in attacker_squares])
+                #
+                # # Get defenders of the current square
+                # defender_squares = board.attackers(piece.color, square)
+                # defender_values = [PIECE_VALUES[piece.piece_type]] + sorted([PIECE_VALUES[board.piece_at(defender).piece_type] for defender in defender_squares])
 
-                # Get defenders of the current square
-                defender_squares = board.attackers(piece.color, square)
-                defender_values = [PIECE_VALUES[piece.piece_type]] + sorted([PIECE_VALUES[board.piece_at(defender).piece_type] for defender in defender_squares])
+                def compute_potential_material_gain_advanced(turn, board_copy):
+                    current_attacker_squares = board_copy.attackers(turn, square)
+                    if len(current_attacker_squares) == 0:
+                        return 0
+                    cheapest_attacker = min(current_attacker_squares, key=lambda attacker_square: PIECE_VALUES[board_copy.piece_at(attacker_square).piece_type])
+                    captured_piece_value = PIECE_VALUES[board_copy.piece_at(square).piece_type]
+                    board_copy.push(chess.Move(cheapest_attacker, square))
+                    return max(0, captured_piece_value - compute_potential_material_gain_advanced(not turn, board_copy))
 
-                for i in range(len(attacker_values)):
-                    if i == len(defender_values):
-                        # There is nothing to take
-                        break
-                    if i + 1 == len(defender_values):
-                        # There is nothing defending this piece, we can simply take.
-                        score += defender_values[i] ** .5
-                    elif attacker_values[i] < defender_values[i] and i <= len(defender_values):
-                        # Can take this piece and, when the next defender takes back, we have gained material
-                        score += (defender_values[i] - attacker_values[i]) ** .5
+                potential_material_gain = compute_potential_material_gain_advanced(board.turn, board.copy())
+
+                score += potential_material_gain ** .7
 
             # underpromotions, weighted towards their rarity
             if move.promotion == chess.QUEEN:
@@ -156,15 +157,6 @@ def estimate_game_craziness(game: chess.pgn.Game):
                 score += 8.5
             elif move.promotion == chess.BISHOP:
                 score += 12.5
-
-            # pieces moving to their most uncommon squares,
-            # example Qa1, Nh1 etc.
-            if (
-                "O-" not in move_node.san()
-                and move.to_square in CORNER_SQUARES
-                and board.piece_at(move.to_square).piece_type == chess.KNIGHT
-            ):
-                score += 0.5
 
             # is king in the centre of the board when there are lots of pieces left
             if (
@@ -180,14 +172,19 @@ def estimate_game_craziness(game: chess.pgn.Game):
         move_scores.append(score)
     best_node_value = 0
     best_board = None
-    ws = [2,1.5,.5,.5,.4,.4,.3,.3,.2,.2]
-    # TODO don't start in a book move or you'll get destroyed by TCEC Viewer Submitted Openings
+    ws = [2,1.5,1,1,.5,.5,.3,.3,.1,.1]
     for i in range(offset, len(move_scores) - len(ws)):
         cur_board = game_moves[i].board()
         if cur_board.turn: # white to move only
-            cur_node_value = total_material[min(len(total_material) - 1, i + 4)] ** .3
-            cur_node_value += imbalance_score[min(len(imbalance_score) - 1, i + 4)]
-            cur_node_value += abs(statistics.median([md for md in material_difference[i: min(len(imbalance_score) - 1, i + 11)]]))
+            future_non_capture_turn_ind = min(len(total_material) - 1, i + 4)
+            while future_non_capture_turn_ind < len(total_material) - 1 and 'x' in game_moves[future_non_capture_turn_ind].san():
+                future_non_capture_turn_ind += 1
+            cur_node_value = (total_material[future_non_capture_turn_ind] - 20) ** .3
+            imbalance = 0
+            for piece_type in chess.PIECE_TYPES:
+                imbalance += max(0, all_turn_piece_counts[future_non_capture_turn_ind]["white"][piece_type] - all_turn_piece_counts[i]["black"][piece_type])
+                imbalance += max(0, all_turn_piece_counts[future_non_capture_turn_ind]["black"][piece_type] - all_turn_piece_counts[i]["white"][piece_type])
+            cur_node_value += imbalance
             for j, w in enumerate(ws):
                 cur_node_value += w * move_scores[i+j]
             # Don't start in a position where en passant is possible

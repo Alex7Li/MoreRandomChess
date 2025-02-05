@@ -9,20 +9,24 @@ import re
 from rich.progress import Progress
 from stockfish import Stockfish
 
+with open('fen_cache.txt', 'r') as f:
+    fen_cache = ast.literal_eval(f.readline())
+
 def get_cp_evaluation(fen, engine):
     if fen in fen_cache:
         return fen_cache[fen]
     engine.set_fen_position(fen)
     evaluation = engine.get_evaluation()
     if evaluation['type'] != 'cp':
-        result = 1000 * (1 if evaluation['value'] > 0 else -1)  # It's a mate-in-N
+        result = 10000 * (1 if evaluation['value'] > 0 else -1)  # It's a mate-in-N
     else:
         result =  evaluation['value']  # Black lost and black's position is worse
     fen_cache[fen] = result
+    if len(fen_cache) % 100 == 0:
+        print("Saving evaluations to cache")
+        with open('fen_cache.txt', 'w') as f:
+            f.write(str(fen_cache))
     return result
-
-with open('fen_cache.txt', 'r') as f:
-    fen_cache = ast.literal_eval(f.readline())
 
 if __name__ == "__main__":
     stockfish_path = '/home/alexli/fun/stockfish/stockfish-ubuntu-x86-64-avx2'
@@ -89,7 +93,18 @@ if __name__ == "__main__":
                             "eval": 'unknown',
                             'result': game.headers['Result']
                         })
-                        progress.update(all_files_task, description=f"Seen: {games_seen + game_index} Min score: {craziest_games[-1]['score']:.1f} Max score: {craziest_games[0]['score']:.1f}")
+                        seen = games_seen + game_index
+                        if seen > 0 and seen % 50 == 0:
+                            craziest_games.sort(
+                                key=lambda game_data: game_data["score"],
+                                reverse=True
+                            )
+                            half_ind = min(high_score_game_count // 2, len(craziest_games) - 1)
+                            end_ind = min(high_score_game_count - 1, len(craziest_games) - 1)
+                            progress.update(all_files_task, description=f"Seen: {games_seen + game_index} Min score: {craziest_games[end_ind]['score']:.1f} Max score: {craziest_games[0]['score']:.1f}")
+                            if seen % 1000 == 0:
+                                print(craziest_games[half_ind])
+
                 game = read_game(pgn_file)
             games_seen += game_index
 
@@ -106,35 +121,24 @@ if __name__ == "__main__":
                     if game['fair'] == 'maybe':
                         evaluation = get_cp_evaluation(game['fen'], engine)
                         game['eval'] = evaluation
-                        if -1.25 < evaluation < 0.75 and game['result'] == '1-0':
+                        if -125 < evaluation < 75 and game['result'] == '1-0':
                             game['fair'] = 'yes'
-                        elif -.75 < evaluation < 1.25 and game['result'] == '0-1':
+                        elif -75 < evaluation < 125 and game['result'] == '0-1':
                             game['fair'] = 'yes'
-                        elif -1.25 < evaluation < 1.25 and game['result'] ==  '1/2-1/2':
+                        elif -125 < evaluation < 125 and game['result'] ==  '1/2-1/2':
                             game['fair'] = 'yes'
-
+                        else:
+                            game['fair'] = 'no'
                     if game['fair'] == 'yes':
                         fair_crazy_games.append(game)
                         progress.update(game_eval_task, advance=1)
                 craziest_games = fair_crazy_games
-                half_ind = high_score_game_count // 2
-                print(f"score {craziest_games[half_ind]['score']} fen {craziest_games[half_ind]['fen']} pgn {craziest_games[half_ind]['pgn']} t [{craziest_games[half_ind]['headers']}]")
 
     highest_scoring_leaderboard = ",\n".join([
         str(game) for game in craziest_games
     ])
-
-    with Progress() as progress:
-        add_eval_task = progress.add_task('cp eval', total=len(craziest_games))
-        for i in range(len(craziest_games)):
-            if craziest_games[i]['eval'] == 'unknown':
-                craziest_games[i]['eval'] = get_cp_evaluation(craziest_games[i]['fen'], engine)
-            progress.update(add_eval_task, advance=1)
     with open(f"rand_positions_tcec_short.txt", "w") as output_log:
         output_log.write(str(craziest_games))
 
 
     print(f"process finished in {round(time() - start_time, 2)}s")
-
-with open('fen_cache.txt', 'w') as f:
-    f.write(fen_cache)
