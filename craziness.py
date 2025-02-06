@@ -41,7 +41,7 @@ def estimate_game_craziness(game: chess.pgn.Game):
     pieces_moved: list[chess.PieceType] = []
     move_scores = [0] * offset
     total_material = [98] * offset
-    imbalance_score = [0] * offset
+    attacker_counts = [0] * offset
     all_turn_piece_counts = [
        {'white': {}, 'black': {}}
     ] * offset
@@ -101,6 +101,7 @@ def estimate_game_craziness(game: chess.pgn.Game):
                 pieces_remaining += 1
         total_material.append(material['white'] + material['black'])
         all_turn_piece_counts.append(piece_counts)
+        attacker_counts.append(0)
         # Remove positions where we can castle but it doesn't look like it
         if board.has_chess960_castling_rights():
             score = -1000  # We have castling rights - but this is a 960 game
@@ -122,7 +123,7 @@ def estimate_game_craziness(game: chess.pgn.Game):
                 last_position = game_moves[node_index - 1].board()
                 last_piece = last_position.piece_at(square)
                 piece_was_just_traded = last_piece is not None and last_piece.color != piece.color
-
+                attacker_counts[-1] += len(board.attackers(board.turn, square))
                 if piece_was_just_traded:
                     continue
 
@@ -152,11 +153,11 @@ def estimate_game_craziness(game: chess.pgn.Game):
             if move.promotion == chess.QUEEN:
                 score += 2.5
             elif move.promotion == chess.KNIGHT:
-                score += 7.5
+                score += 3.5
             elif move.promotion == chess.ROOK:
-                score += 8.5
+                score += 3.5
             elif move.promotion == chess.BISHOP:
-                score += 12.5
+                score += 3.5
 
             # is king in the centre of the board when there are lots of pieces left
             if (
@@ -172,14 +173,14 @@ def estimate_game_craziness(game: chess.pgn.Game):
         move_scores.append(score)
     best_node_value = 0
     best_board = None
-    ws = [2,1.5,1,1,.5,.5,.3,.3,.1,.1]
+    ws = [.8,1.6,1.3,1.1,.8,.8,.5,.5,.3,.3]
     for i in range(offset, len(move_scores) - len(ws)):
         cur_board = game_moves[i].board()
         if cur_board.turn: # white to move only
             future_non_capture_turn_ind = min(len(total_material) - 1, i + 4)
             while future_non_capture_turn_ind < len(total_material) - 1 and 'x' in game_moves[future_non_capture_turn_ind].san():
                 future_non_capture_turn_ind += 1
-            cur_node_value = (total_material[future_non_capture_turn_ind] - 20) ** .3
+            cur_node_value = (total_material[future_non_capture_turn_ind] - 20) ** .3 + attacker_counts[i] * .15 + attacker_counts[i + 1] * .15
             imbalance = 0
             for piece_type in chess.PIECE_TYPES:
                 imbalance += max(0, all_turn_piece_counts[future_non_capture_turn_ind]["white"][piece_type] - all_turn_piece_counts[i]["black"][piece_type])

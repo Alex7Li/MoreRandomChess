@@ -1,6 +1,6 @@
  # [CLICK HERE TO PLAY](https://alex7li.github.io/MoreRandomChess/)
 
-# Random Chess
+# BAT Chess
 
 Chess 960 to the next level. - A listing of fair chess positions starting from very unbalanced positions.
 
