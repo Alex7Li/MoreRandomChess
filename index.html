@@ -19,9 +19,15 @@
                     Play with a friend
                 </a> Set the time controls through the lichess API and then send the challenge link to a friend
               <br/>
-                <a id="playWithComputer">
+                <a id="playWithComputer" target=”_blank”>
                     Play with the computer
-                </a> Make sure that the time control isn't unlimited, or this won't work!
+                </a>
+                <select name="computer" id="computer" onchange="set_ai()">
+                  <option selected value="pawnrobot">Pawnrobot (1100 ELO)</option>
+                  <option value="maia1">Maia1 (1400 ELO)</option>
+                  <option value="maia9">Maia9 (1700 ELO)</option>
+                </select>
+                Make sure that the time control isn't unlimited, or this won't work!
               <br/>
             </div>
             <details>

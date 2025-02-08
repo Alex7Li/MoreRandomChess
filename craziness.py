@@ -118,13 +118,15 @@ def estimate_game_craziness(game: chess.pgn.Game):
                     or piece.piece_type == chess.KING
                 ):
                     continue
+                attacker_counts[-1] += len(board.attackers(board.turn, square))
 
-                # If the piece being looked at was just traded off, there's no sacrifice
+                # If the piece being looked at was just traded off, there's no sacrifice.
                 last_position = game_moves[node_index - 1].board()
                 last_piece = last_position.piece_at(square)
                 piece_was_just_traded = last_piece is not None and last_piece.color != piece.color
-                attacker_counts[-1] += len(board.attackers(board.turn, square))
-                if piece_was_just_traded:
+                # But, if the piece was just moved here, despite hanging on this square, then it's a very scary sacrifice
+                sac_weight = 1 if last_piece is not None else 2
+                if piece_was_just_traded and sac_weight == 1:
                     continue
 
                 # Get the attackers of the current square that are not brand new - if they were just moved here last
@@ -147,18 +149,18 @@ def estimate_game_craziness(game: chess.pgn.Game):
 
                 potential_material_gain = compute_potential_material_gain_advanced(board.turn, board.copy())
 
-                score += potential_material_gain ** .7
+                score += sac_weight * potential_material_gain ** .7
 
-            # underpromotions, weighted towards their rarity
-            if move.promotion == chess.QUEEN:
-                score += 2.5
-            elif move.promotion == chess.KNIGHT:
-                score += 3.5
-            elif move.promotion == chess.ROOK:
-                score += 3.5
-            elif move.promotion == chess.BISHOP:
-                score += 3.5
-
+            # underpromotions
+            if move.promotion is not None:
+                survival_bonus = 1.0
+                if len(game_moves) > node_index + 1:
+                    if game_moves[node_index + 1].move.to_square != move.to_square:
+                        survival_bonus = 2.0
+                if move.promotion == chess.QUEEN:
+                    score += 2 * survival_bonus
+                else:
+                    score += 3.5 * survival_bonus
             # is king in the centre of the board when there are lots of pieces left
             if (
                 23 < king_square[turn_colour] < 40
