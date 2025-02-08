@@ -1,4 +1,4 @@
- # [CLICK HERE TO PLAY](https://alex7li.github.io/MoreRandomChess/)
+ # [CLICK HERE TO PLAY](https://alex7li.github.io/batchess/)
 
 # BAT Chess
 
